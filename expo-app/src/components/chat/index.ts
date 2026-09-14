@@ -1,0 +1,10 @@
+export { SelfDialogueChat } from "./SelfDialogueChat";
+export type { ChatMode } from "./types";
+export type { ChatMessage, CanonicalChatMode, MessageStatus } from "./types";
+export { MODE_LABEL, CANONICAL_MODES, normalizeMode, modeVariants } from "./types";
+export { useSelfDialogue } from "./useSelfDialogue";
+export { ChatBubble } from "./ChatBubble";
+export { ChatInput } from "./ChatInput";
+export { ChatModeSelector } from "./ChatModeSelector";
+export { parseMilestoneTag, formatMilestoneText, QUICK_MILESTONES } from "./MilestoneParser";
+export type { ParsedMilestone, MilestoneKind, QuickMilestone } from "./MilestoneParser";

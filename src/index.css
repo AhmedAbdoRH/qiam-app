@@ -1,0 +1,118 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* Definition of the design system. All colors, gradients, fonts, etc should be defined here. 
+All colors MUST be HSL.
+*/
+
+@layer base {
+  :root {
+    /* Deep black theme with subtle shade steps */
+    --background: 0 0% 0%;
+    --foreground: 210 20% 98%;
+
+    --card: 0 0% 6%;
+    --card-foreground: 0 0% 98%;
+
+    --popover: 0 0% 6%;
+    --popover-foreground: 0 0% 98%;
+
+    --primary: 0 0% 98%;
+    --primary-foreground: 0 0% 6%;
+
+    --secondary: 0 0% 8%;
+    --secondary-foreground: 0 0% 98%;
+
+    --muted: 0 0% 12%;
+    --muted-foreground: 0 0% 70%;
+
+    --accent: 0 0% 10%;
+    --accent-foreground: 0 0% 98%;
+
+    --destructive: 0 70% 50%;
+    --destructive-foreground: 0 0% 98%;
+
+    --border: 0 0% 14%;
+    --input: 0 0% 14%;
+    --ring: 0 0% 98%;
+
+    --radius: 0.75rem;
+
+    /* Custom colors for balance states */
+    --balance-low: 0 85% 50%;
+    --balance-medium: 35 100% 50%;
+    --balance-high: 120 60% 45%;
+    
+    /* Gradients */
+    --gradient-card: hsl(0 0% 0%);
+    
+    /* Transitions */
+    --transition-smooth: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+  }
+}
+
+@layer base {
+  * {
+    @apply border-border;
+  }
+
+  html {
+    direction: rtl;
+  }
+
+  body {
+    @apply bg-background text-foreground antialiased;
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Roboto', 'Oxygen', 'Ubuntu', 'Cantarell', sans-serif;
+    direction: rtl;
+  }
+
+  h1, h2, h3, h4, h5, h6 {
+    @apply text-foreground font-semibold;
+  }
+}
+
+@layer utilities {
+  .balance-gradient {
+    transition: all 0.5s ease;
+  }
+
+  /* Enhanced subtle glow effect */
+  .glow-anim {
+    animation: glow-move 12s ease-in-out infinite alternate;
+    filter: blur(35px);
+  }
+
+  .glow-anim::before {
+    content: '';
+    position: absolute;
+    inset: -4px;
+    background: inherit;
+    filter: blur(20px);
+    opacity: 0.4;
+    z-index: -1;
+  }
+
+  @keyframes glow-move {
+    0%   { 
+      transform: translate3d(0, 0, 0) scale(1); 
+      opacity: 0.6; 
+    }
+    25%  { 
+      transform: translate3d(-12%, -4%, 0) scale(1.06);
+      opacity: 0.7;
+    }
+    50%  { 
+      transform: translate3d(-18%, -6%, 0) scale(1.1);
+      opacity: 0.8;
+    }
+    75%  { 
+      transform: translate3d(-22%, -4%, 0) scale(1.06);
+      opacity: 0.7;
+    }
+    100% { 
+      transform: translate3d(-25%, 0%, 0) scale(1);
+      opacity: 0.6;
+    }
+  }
+}

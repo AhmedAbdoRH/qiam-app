@@ -1,0 +1,6 @@
+{
+  "name": "مقياس الاتزان الروحي والنفسي",
+  "description": "أداة تفاعلية لقياس وتقييم الاتزان الروحي والنفسي عبر 50 قيمة عليا",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
