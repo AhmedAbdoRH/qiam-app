@@ -1,10 +1,8 @@
-import { useMemo, useCallback, useState } from "react";
-import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { supabase } from "@/integrations/supabase/client";
-import { useAuth } from "@/hooks/useAuth";
-import { Slider } from "@/components/ui/slider";
-import { ChevronLeft, ChevronRight, Target, Flame, Copy, History } from "lucide-react";
-import { toast } from "sonner";
+import React, { useEffect, useMemo, useState } from "react";
+import { View, Text, Pressable, TextInput, Alert } from "react-native";
+import Slider from "@react-native-community/slider";
+import { ChevronLeft, ChevronRight, Copy } from "lucide-react-native";
+import { supabase } from "../lib/supabase";
 
 export const DEFAULT_HABITS = [
   { key: "sleep", label: "النوم السليم", icon: "🌙" },
@@ -19,471 +17,113 @@ export const DEFAULT_HABITS = [
   { key: "purification", label: "جلسة تطهير شعور كاملة", icon: "✨" },
 ] as const;
 
-// backward-compatible export
-export const HABIT_ITEMS = DEFAULT_HABITS;
-
 type HabitKey = (typeof DEFAULT_HABITS)[number]["key"];
 type Scores = Partial<Record<HabitKey, number>>;
 type Labels = Partial<Record<HabitKey, string>>;
 
-const formatDateISO = (d: Date) => {
-  const y = d.getFullYear();
-  const m = String(d.getMonth() + 1).padStart(2, "0");
-  const day = String(d.getDate()).padStart(2, "0");
-  return `${y}-${m}-${day}`;
-};
+const formatDateISO = (d: Date) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+const formatArabicDate = (iso: string) => new Date(iso + "T12:00:00").toLocaleDateString("ar-EG", { weekday: "long", year: "numeric", month: "long", day: "numeric" });
+const calcAverage = (s: Scores) => DEFAULT_HABITS.map((h) => s[h.key] ?? 0).reduce((a, b) => a + b, 0) / DEFAULT_HABITS.length;
+const getLabel = (key: HabitKey, labels: Labels) => labels[key]?.trim() || DEFAULT_HABITS.find((h) => h.key === key)?.label || key;
 
-const getYesterdayISO = () => {
-  const d = new Date();
-  d.setDate(d.getDate() - 1);
-  return formatDateISO(d);
-};
+const scoreColor = (s: number) => (s >= 8 ? "#34D399" : s >= 6 ? "#A3E635" : s >= 4 ? "#FBBF24" : s >= 2 ? "#FB923C" : "#F87171");
 
-const formatArabicDate = (iso: string) => {
-  const d = new Date(iso + "T12:00:00");
-  return d.toLocaleDateString("ar-EG", {
-    weekday: "long",
-    year: "numeric",
-    month: "long",
-    day: "numeric",
-  });
-};
+export const DailyHabitsTracker: React.FC<{ userId: string }> = ({ userId }) => {
+  const [dateIso, setDateIso] = useState(formatDateISO(new Date()));
+  const [scores, setScores] = useState<Scores>({});
+  const [labels, setLabels] = useState<Labels>({});
 
-const formatShortDate = (iso: string) => {
-  const d = new Date(iso + "T12:00:00");
-  return d.toLocaleDateString("ar-EG", {
-    year: "numeric",
-    month: "short",
-    day: "numeric",
-  });
-};
-
-const getScoreColor = (score: number): string => {
-  if (score >= 8) return "text-emerald-400";
-  if (score >= 6) return "text-lime-400";
-  if (score >= 4) return "text-amber-400";
-  if (score >= 2) return "text-orange-400";
-  return "text-red-400";
-};
-
-const getScoreBg = (score: number): string => {
-  if (score >= 8) return "bg-emerald-500/15 border-emerald-500/30";
-  if (score >= 6) return "bg-lime-500/15 border-lime-500/30";
-  if (score >= 4) return "bg-amber-500/15 border-amber-500/30";
-  if (score >= 2) return "bg-orange-500/15 border-orange-500/30";
-  return "bg-red-500/15 border-red-500/30";
-};
-
-const getBarGradient = (score: number): string => {
-  if (score >= 8) return "from-emerald-600 to-emerald-400";
-  if (score >= 6) return "from-lime-600 to-lime-400";
-  if (score >= 4) return "from-amber-600 to-amber-400";
-  if (score >= 2) return "from-orange-600 to-orange-400";
-  return "from-red-600 to-red-400";
-};
-
-const calcAverage = (scores: Scores) => {
-  const values = DEFAULT_HABITS.map((h) => scores[h.key] ?? 0);
-  return values.reduce((a, b) => a + b, 0) / DEFAULT_HABITS.length;
-};
-
-const formatScore = (v: number) => `${Number(v).toFixed(1)}/10`;
-
-const getLabel = (key: HabitKey, labels: Labels) =>
-  (labels[key]?.trim() || DEFAULT_HABITS.find((h) => h.key === key)?.label || key);
-
-const formatDayText = (
-  dateIso: string,
-  scores: Scores,
-  labels: Labels,
-  includeTitle = true
-) => {
-  const lines = DEFAULT_HABITS.map((h) => {
-    const v = scores[h.key] ?? 0;
-    return `• ${getLabel(h.key, labels)}: ${formatScore(v)}`;
-  });
-  const avg = calcAverage(scores);
-  const body = [
-    `📅 ${formatArabicDate(dateIso)}`,
-    `المتوسط: ${formatScore(avg)}`,
-    "────────────",
-    ...lines,
-  ];
-  if (includeTitle) {
-    return ["التقرير اليومي للعادات الأكثر فاعلية", "", ...body].join("\n");
-  }
-  return body.join("\n");
-};
-
-export const DailyHabitsTracker = () => {
-  const { user } = useAuth();
-  const queryClient = useQueryClient();
-  const [selectedDate, setSelectedDate] = useState(() => getYesterdayISO());
-  const [copying, setCopying] = useState(false);
-  const [editingKey, setEditingKey] = useState<HabitKey | null>(null);
-  const [editValue, setEditValue] = useState("");
-  const todayISO = formatDateISO(new Date());
-  const yesterdayISO = getYesterdayISO();
-  const isToday = selectedDate === todayISO;
-  const isYesterday = selectedDate === yesterdayISO;
-
-  const { data: record, isLoading } = useQuery({
-    queryKey: ["dailyHabits", user?.id, selectedDate],
-    queryFn: async () => {
-      if (!user) return null;
-      const { data, error } = await (supabase as any)
-        .from("daily_habits")
-        .select("*")
-        .eq("user_id", user.id)
-        .eq("habit_date", selectedDate)
-        .maybeSingle();
-      if (error) throw error;
-      return data as { id: string; scores: Scores } | null;
-    },
-    enabled: !!user,
-  });
-
-  const { data: labelsRecord } = useQuery({
-    queryKey: ["habitSettings", user?.id],
-    queryFn: async () => {
-      if (!user) return null;
-      const { data, error } = await (supabase as any)
-        .from("habit_settings")
-        .select("*")
-        .eq("user_id", user.id)
-        .maybeSingle();
-      if (error) throw error;
-      return data as { id: string; labels: Labels } | null;
-    },
-    enabled: !!user,
-  });
-
-  const scores: Scores = record?.scores || {};
-  const labels: Labels = labelsRecord?.labels || {};
-  const average = useMemo(() => calcAverage(scores), [scores]);
-  const filledCount = useMemo(
-    () => DEFAULT_HABITS.filter((h) => (scores[h.key] ?? 0) > 0).length,
-    [scores]
-  );
-
-  const saveScore = useCallback(
-    async (key: HabitKey, value: number) => {
-      if (!user) return;
-      const nextScores = { ...scores, [key]: Math.round(value * 10) / 10 };
-
-      queryClient.setQueryData(["dailyHabits", user.id, selectedDate], (old: any) => {
-        if (old) return { ...old, scores: nextScores };
-        return { id: "temp", scores: nextScores };
-      });
-
-      try {
-        if (record?.id && record.id !== "temp") {
-          const { error } = await (supabase as any)
-            .from("daily_habits")
-            .update({ scores: nextScores, updated_at: new Date().toISOString() })
-            .eq("id", record.id)
-            .eq("user_id", user.id);
-          if (error) throw error;
-        } else {
-          const { data, error } = await (supabase as any)
-            .from("daily_habits")
-            .upsert(
-              {
-                user_id: user.id,
-                habit_date: selectedDate,
-                scores: nextScores,
-                updated_at: new Date().toISOString(),
-              },
-              { onConflict: "user_id,habit_date" }
-            )
-            .select("*")
-            .single();
-          if (error) throw error;
-          queryClient.setQueryData(["dailyHabits", user.id, selectedDate], data);
-        }
-      } catch {
-        toast.error("تعذر حفظ التقييم");
-        queryClient.invalidateQueries({ queryKey: ["dailyHabits", user.id, selectedDate] });
-      }
-    },
-    [user, scores, selectedDate, record, queryClient]
-  );
-
-  const saveLabel = useCallback(
-    async (key: HabitKey, newLabel: string) => {
-      if (!user) return;
-      const trimmed = newLabel.trim();
-      const defaultLabel = DEFAULT_HABITS.find((h) => h.key === key)?.label || "";
-      const nextLabels: Labels = { ...labels };
-
-      if (!trimmed || trimmed === defaultLabel) {
-        delete nextLabels[key];
-      } else {
-        nextLabels[key] = trimmed;
-      }
-
-      queryClient.setQueryData(["habitSettings", user.id], (old: any) => {
-        if (old) return { ...old, labels: nextLabels };
-        return { id: "temp", labels: nextLabels };
-      });
-
-      try {
-        const { data, error } = await (supabase as any)
-          .from("habit_settings")
-          .upsert(
-            {
-              user_id: user.id,
-              labels: nextLabels,
-              updated_at: new Date().toISOString(),
-            },
-            { onConflict: "user_id" }
-          )
-          .select("*")
-          .single();
-        if (error) throw error;
-        queryClient.setQueryData(["habitSettings", user.id], data);
-      } catch {
-        toast.error("تعذر حفظ الاسم");
-        queryClient.invalidateQueries({ queryKey: ["habitSettings", user.id] });
-      }
-    },
-    [user, labels, queryClient]
-  );
-
-  const startEdit = (key: HabitKey) => {
-    setEditingKey(key);
-    setEditValue(getLabel(key, labels));
+  const load = async (iso: string) => {
+    const [habitsRes, settingsRes] = await Promise.all([
+      (supabase as any).from("daily_habits").select("*").eq("user_id", userId).eq("date", iso).maybeSingle(),
+      (supabase as any).from("habit_settings").select("*").eq("user_id", userId).maybeSingle(),
+    ]);
+    const row = habitsRes.data;
+    const s: Scores = {};
+    DEFAULT_HABITS.forEach((h) => {
+      if (row && typeof row[h.key] === "number") s[h.key] = row[h.key];
+    });
+    setScores(s);
+    if (settingsRes.data?.labels) setLabels(settingsRes.data.labels);
   };
 
-  const commitEdit = async () => {
-    if (!editingKey) return;
-    const key = editingKey;
-    const value = editValue;
-    setEditingKey(null);
-    await saveLabel(key, value);
-  };
+  useEffect(() => {
+    load(dateIso);
+  }, [dateIso]);
 
-  const shiftDate = (delta: number) => {
-    const d = new Date(selectedDate + "T12:00:00");
+  const shiftDay = (delta: number) => {
+    const d = new Date(dateIso + "T12:00:00");
     d.setDate(d.getDate() + delta);
-    const next = formatDateISO(d);
-    if (next > todayISO) return;
-    setSelectedDate(next);
+    setDateIso(formatDateISO(d));
   };
 
-  const copyToClipboard = async (text: string, successMsg: string) => {
-    try {
-      await navigator.clipboard.writeText(text);
-      toast.success(successMsg);
-    } catch {
-      toast.error("تعذر النسخ");
+  const saveScore = async (key: HabitKey, v: number) => {
+    setScores((p) => ({ ...p, [key]: v }));
+    await (supabase as any).from("daily_habits").upsert({ user_id: userId, date: dateIso, [key]: v }, { onConflict: "user_id,date" });
+  };
+
+  const copyYesterday = async () => {
+    const d = new Date(dateIso + "T12:00:00");
+    d.setDate(d.getDate() - 1);
+    const y = formatDateISO(d);
+    const { data } = await (supabase as any).from("daily_habits").select("*").eq("user_id", userId).eq("date", y).maybeSingle();
+    if (!data) {
+      Alert.alert("تنبيه", "لا توجد بيانات للأمس");
+      return;
     }
+    const s: Scores = {};
+    DEFAULT_HABITS.forEach((h) => {
+      if (typeof data[h.key] === "number") s[h.key] = data[h.key];
+    });
+    setScores(s);
+    await (supabase as any).from("daily_habits").upsert({ user_id: userId, date: dateIso, ...s }, { onConflict: "user_id,date" });
   };
 
-  const handleCopyToday = async () => {
-    const text = formatDayText(selectedDate, scores, labels, true);
-    await copyToClipboard(text, "تم نسخ تقييمات اليوم");
-  };
-
-  const handleCopyFullHistory = async () => {
-    if (!user) return;
-    setCopying(true);
-    try {
-      const { data, error } = await (supabase as any)
-        .from("daily_habits")
-        .select("habit_date, scores")
-        .eq("user_id", user.id)
-        .order("habit_date", { ascending: false });
-
-      if (error) throw error;
-
-      const rows = (data || []) as { habit_date: string; scores: Scores }[];
-
-      if (rows.length === 0) {
-        toast.info("لا يوجد سجل بعد");
-        return;
-      }
-
-      const sections = rows.map((row) =>
-        formatDayText(row.habit_date, row.scores || {}, labels, false)
-      );
-      const header = [
-        "التقرير اليومي للعادات الأكثر فاعلية",
-        "",
-        `عدد الأيام: ${rows.length}`,
-        `تاريخ النسخ: ${formatArabicDate(todayISO)}`,
-        "",
-      ].join("\n");
-
-      const fullText = header + sections.join("\n\n════════════════════════\n\n");
-      await copyToClipboard(fullText, `تم نسخ السجل الكامل (${rows.length} يوم)`);
-    } catch {
-      toast.error("تعذر تحميل السجل");
-    } finally {
-      setCopying(false);
-    }
-  };
+  const avg = useMemo(() => calcAverage(scores), [scores]);
 
   return (
-    <div className="mb-5 w-full" dir="rtl">
-      {/* Header: title + avg + copy actions */}
-      <div className="flex items-center justify-between gap-2 mb-2.5 px-0.5">
-        <div className="flex items-center gap-1.5 min-w-0">
-          <Target className="w-4 h-4 text-cyan-400 shrink-0" />
-          <h3 className="text-xs font-semibold text-cyan-200/90 truncate">تتبع العادات اليومي</h3>
-        </div>
-
-        <div className="flex items-center gap-1.5 shrink-0">
-          <button
-            type="button"
-            onClick={handleCopyToday}
-            className="flex items-center gap-1 px-2 py-1 rounded-lg bg-white/5 hover:bg-white/10 border border-white/10 text-[10px] text-white/70 hover:text-white transition-all active:scale-95"
-            title="نسخ تقييمات اليوم"
-          >
-            <Copy className="w-3 h-3" />
-            <span className="hidden sm:inline">اليوم</span>
-          </button>
-          <button
-            type="button"
-            onClick={handleCopyFullHistory}
-            disabled={copying}
-            className="flex items-center gap-1 px-2 py-1 rounded-lg bg-white/5 hover:bg-white/10 border border-white/10 text-[10px] text-white/70 hover:text-white transition-all active:scale-95 disabled:opacity-40"
-            title="نسخ السجل بالكامل"
-          >
-            <History className="w-3 h-3" />
-            <span className="hidden sm:inline">{copying ? "..." : "السجل"}</span>
-          </button>
-          <div
-            className={`flex items-center gap-1 px-2 py-1 rounded-full border text-[10px] font-bold ${getScoreBg(average)}`}
-          >
-            <Flame className={`w-3 h-3 ${getScoreColor(average)}`} />
-            <span className={getScoreColor(average)}>{average.toFixed(1)}</span>
-          </div>
-        </div>
-      </div>
-
-      {/* Compact date navigator */}
-      <div className="flex items-center justify-between mb-2.5 bg-white/5 border border-white/10 rounded-xl px-2 py-1.5">
-        <button
-          onClick={() => shiftDate(1)}
-          disabled={isToday}
-          className="p-1.5 rounded-lg bg-transparent hover:bg-white/10 text-white/60 disabled:opacity-20 disabled:cursor-not-allowed transition-all active:scale-95"
-          aria-label="اليوم التالي"
-        >
-          <ChevronRight className="w-3.5 h-3.5" />
-        </button>
-
-        <div className="text-center flex-1 flex items-center justify-center gap-2">
-          <p className="text-xs font-medium text-white/90">{formatShortDate(selectedDate)}</p>
-          {isToday && (
-            <span className="text-[9px] text-cyan-300/80 bg-cyan-500/10 px-1.5 py-0.5 rounded-full">
-              اليوم
-            </span>
-          )}
-          {isYesterday && (
-            <span className="text-[9px] text-amber-300/80 bg-amber-500/10 px-1.5 py-0.5 rounded-full">
-              أمس
-            </span>
-          )}
-        </div>
-
-        <button
-          onClick={() => shiftDate(-1)}
-          className="p-1.5 rounded-lg bg-transparent hover:bg-white/10 text-white/60 transition-all active:scale-95"
-          aria-label="اليوم السابق"
-        >
-          <ChevronLeft className="w-3.5 h-3.5" />
-        </button>
-      </div>
-
-      {/* Thin progress bar — fills from right to left (RTL) */}
-      <div className="mb-2.5 flex items-center gap-2 px-0.5" dir="rtl">
-        <div className="flex-1 h-1 rounded-full bg-white/5 overflow-hidden flex justify-end">
-          <div
-            className={`h-full rounded-full bg-gradient-to-l ${getBarGradient(average)} transition-all duration-500`}
-            style={{ width: `${(average / 10) * 100}%` }}
-          />
-        </div>
-        <span className="text-[9px] text-white/35 whitespace-nowrap">
-          {filledCount}/{DEFAULT_HABITS.length}
-        </span>
-      </div>
-
-      {/* Compact habits list — single-line rows */}
-      <div className="space-y-1.5">
-        {isLoading ? (
-          <div className="text-center py-4 text-[10px] text-white/30">جاري التحميل...</div>
-        ) : (
-          DEFAULT_HABITS.map((habit) => {
-            const value = scores[habit.key] ?? 0;
-            const label = getLabel(habit.key, labels);
-            const isEditing = editingKey === habit.key;
-            return (
-              <div
-                key={habit.key}
-                className="bg-white/5 border border-white/10 rounded-xl px-2.5 py-2 transition-all hover:bg-white/8"
-              >
-                <div className="flex items-center gap-2 mb-1.5">
-                  <span className="text-sm shrink-0 leading-none" aria-hidden>
-                    {habit.icon}
-                  </span>
-                  {isEditing ? (
-                    <input
-                      autoFocus
-                      value={editValue}
-                      onChange={(e) => setEditValue(e.target.value)}
-                      onBlur={commitEdit}
-                      onKeyDown={(e) => {
-                        if (e.key === "Enter") {
-                          e.preventDefault();
-                          commitEdit();
-                        } else if (e.key === "Escape") {
-                          setEditingKey(null);
-                        }
-                      }}
-                      className="flex-1 min-w-0 text-xs font-medium text-white/90 bg-white/10 border border-cyan-400/40 rounded-md px-2 py-0.5 focus:outline-none focus:border-cyan-300/70"
-                      dir="rtl"
-                    />
-                  ) : (
-                    <button
-                      type="button"
-                      onClick={() => startEdit(habit.key)}
-                      className="text-xs font-medium text-white/85 flex-1 truncate leading-tight text-right hover:text-cyan-200 transition-colors"
-                      title="اضغط لتعديل الاسم"
-                    >
-                      {label}
-                    </button>
-                  )}
-                  <span
-                    className={`text-[11px] font-mono font-bold min-w-[2.4rem] text-center px-1.5 py-0.5 rounded-md border ${getScoreBg(value)} ${getScoreColor(value)}`}
-                  >
-                    {value.toFixed(1)}
-                  </span>
-                </div>
-
-                <div className="relative" dir="ltr">
-                  <div
-                    className="absolute inset-x-0 h-1.5 rounded-full opacity-20 top-1/2 -translate-y-1/2"
-                    style={{
-                      background:
-                        "linear-gradient(to right, hsl(0, 84%, 55%), hsl(48, 96%, 50%), hsl(142, 70%, 40%))",
-                    }}
-                  />
-                  <Slider
-                    value={[value]}
-                    onValueChange={(val) => saveScore(habit.key, val[0])}
-                    max={10}
-                    min={0}
-                    step={0.1}
-                    className="relative z-10 w-full cursor-pointer"
-                    rangeClassName={`bg-gradient-to-r ${getBarGradient(value)}`}
-                  />
-                </div>
-              </div>
-            );
-          })
-        )}
-      </div>
-    </div>
+    <View className="rounded-2xl border border-zinc-800 bg-[#0A0A0A] p-3 mt-3">
+      <View className="flex-row items-center justify-between mb-1">
+        <Pressable onPress={() => shiftDay(-1)} className="p-2"><ChevronLeft size={20} color="#fff" /></Pressable>
+        <View className="items-center">
+          <Text className="text-white font-bold">العادات اليومية</Text>
+          <Text className="text-zinc-400 text-xs">{formatArabicDate(dateIso)}</Text>
+        </View>
+        <Pressable onPress={() => shiftDay(1)} className="p-2"><ChevronRight size={20} color="#fff" /></Pressable>
+      </View>
+      <View className="flex-row items-center justify-between mb-2">
+        <Pressable onPress={copyYesterday} className="flex-row items-center gap-1 bg-zinc-800 rounded-full px-3 py-1">
+          <Copy size={14} color="#fff" />
+          <Text className="text-white text-xs">نسخ الأمس</Text>
+        </Pressable>
+        <Text className="text-white font-bold">المتوسط: {avg.toFixed(1)}/10</Text>
+      </View>
+      <View className="h-2 rounded-full bg-zinc-800 overflow-hidden mb-2">
+        <View className="h-2 rounded-full bg-amber-500" style={{ width: `${(avg / 10) * 100}%` }} />
+      </View>
+      {DEFAULT_HABITS.map((h) => {
+        const v = scores[h.key] ?? 0;
+        return (
+          <View key={h.key} className="border border-zinc-800 rounded-xl p-2 mb-2">
+            <View className="flex-row items-center justify-between">
+              <Text className="font-bold text-sm" style={{ color: scoreColor(v) }}>{v.toFixed(1)}/10</Text>
+              <Text className="text-white text-sm">{h.icon} {getLabel(h.key, labels)}</Text>
+            </View>
+            <Slider minimumValue={0} maximumValue={10} step={0.1} value={v} onValueChange={(val) => setScores((p) => ({ ...p, [h.key]: val }))} onSlidingComplete={(val) => saveScore(h.key, val)} minimumTrackTintColor={scoreColor(v)} maximumTrackTintColor="#27272A" />
+            <TextInput
+              value={labels[h.key] ?? ""}
+              onChangeText={(t) => setLabels((p) => ({ ...p, [h.key]: t }))}
+              onEndEditing={async () => {
+                await (supabase as any).from("habit_settings").upsert({ user_id: userId, labels }, { onConflict: "user_id" });
+              }}
+              textAlign="right"
+              placeholder={h.label}
+              placeholderTextColor="#52525B"
+              className="text-zinc-400 text-xs mt-1"
+            />
+          </View>
+        );
+      })}
+    </View>
   );
 };

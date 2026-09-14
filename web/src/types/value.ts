@@ -2,13 +2,13 @@ export interface ValueData {
   id: string;
   name: string;
   feelingsBeingHealed: string[];
-  feelingsHealed?: string[];
-  feelingsHealedDates?: Record<string, string>;
-  beliefs: Record<string, string>;
+  feelingsHealed?: string[]; // المشاعر التي تم علاجها (الأخضر)
+  feelingsHealedDates?: Record<string, string>; // تواريخ مشاعر تم علاجها
+  beliefs: Record<string, string>; // ملاحظات لكل شعور
   notes: string;
-  truth?: string;
+  truth?: string; // الحقيقة
   balancePercentage: number;
-  isPinned?: boolean;
+  isPinned?: boolean; // حالة التثبيت
 }
 
 export const FEELINGS = [
@@ -18,10 +18,8 @@ export const FEELINGS = [
   "الحزن",
   "الخوف",
   "الاحتياج",
-  "الغضب",
+  "الغضب"
 ] as const;
-
-export type Feeling = (typeof FEELINGS)[number];
 
 export const VALUES = [
   "الولاية",
@@ -73,10 +71,10 @@ export const VALUES = [
   "الغنى",
   "الود",
   "العلم",
-  "الخلاقية",
+  "الخلاقية"
 ] as const;
 
-// Default balance percentages — math preserved verbatim from web app
+// Default balance percentages for each value (converted from decimal to percentage)
 export const DEFAULT_BALANCE_PERCENTAGES: Record<string, number> = {
   "الولاية": 50,
   "المتانة": 50,
@@ -88,6 +86,7 @@ export const DEFAULT_BALANCE_PERCENTAGES: Record<string, number> = {
   "الأمن": 50,
   "الواحدية": 50,
   "الحكمة": 50,
+  "الهيمنة": 50,
   "العظمة": 60,
   "العزة": 60,
   "الظهور": 60,

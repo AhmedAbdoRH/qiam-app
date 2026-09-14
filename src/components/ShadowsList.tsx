@@ -1,98 +1,51 @@
-import { useEffect, useState } from "react";
-import { supabase } from "@/integrations/supabase/client";
-import { useAuth } from "@/hooks/useAuth";
-import { Input } from "@/components/ui/input";
-import { Button } from "@/components/ui/button";
-import { Trash2 } from "lucide-react";
-import { toast } from "sonner";
+import React, { useEffect, useState } from "react";
+import { View, Text, Pressable, TextInput, Alert } from "react-native";
+import { Plus, Trash2 } from "lucide-react-native";
+import { supabase } from "../lib/supabase";
 
-interface Shadow {
-  id: string;
-  content: string;
-}
-
-export const ShadowsList = () => {
-  const { user } = useAuth();
-  const [shadows, setShadows] = useState<Shadow[]>([]);
-  const [newShadow, setNewShadow] = useState("");
+export const ShadowsList: React.FC<{ userId: string }> = ({ userId }) => {
+  const [items, setItems] = useState<any[]>([]);
+  const [draft, setDraft] = useState("");
 
   const load = async () => {
-    if (!user) return;
-    const { data, error } = await supabase
-      .from("sovereign_shadows")
-      .select("id, content")
-      .eq("user_id", user.id)
-      .order("created_at", { ascending: true });
-    if (error) return;
-    setShadows((data || []) as Shadow[]);
+    const { data } = await (supabase as any).from("sovereign_shadows").select("*").eq("user_id", userId).order("created_at", { ascending: false });
+    setItems((data as any) || []);
   };
 
   useEffect(() => {
     load();
-  }, [user]);
+  }, []);
 
-  const addShadow = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!user || !newShadow.trim()) return;
-    const text = newShadow.trim();
-    setNewShadow("");
-    const { data, error } = await supabase
-      .from("sovereign_shadows")
-      .insert({ user_id: user.id, content: text })
-      .select("id, content")
-      .single();
+  const add = async () => {
+    if (!draft.trim()) return;
+    const content = draft.trim();
+    setDraft("");
+    const { data, error } = await (supabase as any).from("sovereign_shadows").insert({ user_id: userId, content }).select().single();
     if (error) {
-      toast.error("تعذر حفظ الملاحظة");
+      Alert.alert("خطأ", "تعذر الإضافة");
       return;
     }
-    setShadows((prev) => [...prev, data as Shadow]);
-    toast.success("تمت إضافة الظل");
+    setItems((p) => [data as any, ...p]);
   };
 
-  const deleteShadow = async (id: string) => {
-    setShadows((prev) => prev.filter((s) => s.id !== id));
-    await supabase.from("sovereign_shadows").delete().eq("id", id);
+  const remove = async (id: string) => {
+    setItems((p) => p.filter((i) => i.id !== id));
+    await (supabase as any).from("sovereign_shadows").delete().eq("id", id).eq("user_id", userId);
   };
 
   return (
-    <section className="mb-6" dir="rtl">
-      <h2 className="text-lg font-semibold text-foreground mb-3">الظلال</h2>
-      <div className="rounded-xl bg-secondary/40 border border-border p-4 space-y-3">
-        <form onSubmit={addShadow} className="flex gap-2">
-          <Input
-            value={newShadow}
-            onChange={(e) => setNewShadow(e.target.value)}
-            placeholder="أضف ملاحظة ظل..."
-            className="flex-1"
-          />
-          <Button type="submit" variant="outline" size="sm">
-            إضافة
-          </Button>
-        </form>
-        <ul className="space-y-2">
-          {shadows.map((s) => (
-            <li
-              key={s.id}
-              className="group flex items-center gap-3 px-2 py-1.5 rounded-md hover:bg-secondary/50 transition-colors"
-            >
-              <span className="w-2 h-2 rounded-full bg-primary flex-shrink-0" />
-              <span className="flex-1 text-base text-foreground">{s.content}</span>
-              <Button
-                type="button"
-                variant="ghost"
-                size="icon"
-                className="h-7 w-7 opacity-0 group-hover:opacity-100 transition-opacity"
-                onClick={() => deleteShadow(s.id)}
-              >
-                <Trash2 className="h-3.5 w-3.5 text-muted-foreground hover:text-destructive" />
-              </Button>
-            </li>
-          ))}
-          {shadows.length === 0 && (
-            <li className="text-sm text-muted-foreground text-center py-2">لا توجد ظلال بعد</li>
-          )}
-        </ul>
-      </div>
-    </section>
+    <View className="rounded-2xl border border-zinc-800 bg-[#0A0A0A] p-3 mt-3">
+      <Text className="text-white font-bold text-base mb-2 text-right">الظلال السيادية</Text>
+      <View className="flex-row items-center gap-2 mb-2">
+        <Pressable onPress={add} className="bg-amber-500 rounded-lg p-2"><Plus size={18} color="#000" /></Pressable>
+        <TextInput value={draft} onChangeText={setDraft} textAlign="right" placeholder="ظل جديد..." placeholderTextColor="#52525B" className="flex-1 bg-zinc-900 text-white rounded-lg px-3 py-2 border border-zinc-800" onSubmitEditing={add} />
+      </View>
+      {items.map((i) => (
+        <View key={i.id} className="flex-row items-center justify-between border border-zinc-800 rounded-xl px-3 py-2 mb-1">
+          <Pressable onPress={() => remove(i.id)} className="p-1"><Trash2 size={16} color="#EF4444" /></Pressable>
+          <Text className="text-white flex-1 text-right">{i.content}</Text>
+        </View>
+      ))}
+    </View>
   );
 };

@@ -1,479 +1,177 @@
-import React, { useState, useEffect, useCallback, useRef } from "react";
-import { toast } from "sonner";
-import {
-  Sheet,
-  SheetContent,
-  SheetDescription,
-  SheetHeader,
-  SheetTitle,
-} from "@/components/ui/sheet";
-import { Label } from "@/components/ui/label";
-import { Slider } from "@/components/ui/slider";
-import { Button } from "@/components/ui/button";
-import { Save, StickyNote, X, Download, Copy } from "lucide-react";
-import { Pin, PinOff } from "lucide-react";
-import { FEELINGS, ValueData } from "@/types/value";
-import { getBalanceColor } from "@/utils/balanceCalculator";
-import { buildValueMarkdown } from "@/utils/reportGenerator";
+import React, { useState } from "react";
+import { View, Text, Pressable, TextInput, Modal, ScrollView, Alert } from "react-native";
+import Slider from "@react-native-community/slider";
+import { X, Pin, Download } from "lucide-react-native";
+import { FEELINGS, ValueData } from "../types/value";
+import { calculateBalance } from "../utils/balanceCalculator";
+import { supabase } from "../lib/supabase";
+import { buildValueMarkdown, shareMarkdown } from "../utils/reportGenerator";
 import { TaskList } from "./TaskList";
-import { Plus } from "lucide-react";
 
-interface ValueSheetProps {
-  isOpen: boolean;
-  onClose: () => void;
-  valueName: string;
-  feelingsBeingHealed: string[];
-  feelingsHealed?: string[];
-  feelingsHealedDates?: Record<string, string>;
-  beliefs: Record<string, string>;
-  notes: string;
-  truth?: string;
-  balancePercentage: number;
-  onUpdate: (feelingsBeingHealed: string[], feelingsHealed: string[], feelingsHealedDates: Record<string, string>, beliefs: Record<string, string>, notes: string, balancePercentage: number, truth: string) => void;
-  valueId?: string;
-  isPinned?: boolean;
-  onTogglePin?: () => void;
-  valueData?: ValueData;
+interface Props {
+  visible: boolean;
+  value: ValueData | null;
+  valueId: string;
+  onClose: (updated?: ValueData) => void;
+  userId: string;
 }
 
-export const ValueSheet = ({
-  isOpen,
-  onClose,
-  valueName,
-  feelingsBeingHealed,
-  feelingsHealed = [],
-  feelingsHealedDates = {},
-  beliefs,
-  notes,
-  truth = "",
-  balancePercentage,
-  onUpdate,
-  valueId,
-  isPinned = false,
-  onTogglePin,
-  valueData,
-}: ValueSheetProps) => {
-  const [localFeelingsBeingHealed, setLocalFeelingsBeingHealed] = useState<string[]>(feelingsBeingHealed);
-  const [localFeelingsHealed, setLocalFeelingsHealed] = useState<string[]>(feelingsHealed);
-  const [localFeelingsHealedDates, setLocalFeelingsHealedDates] = useState<Record<string, string>>(feelingsHealedDates);
-  const [localBeliefs, setLocalBeliefs] = useState<Record<string, string>>(beliefs);
-  const [localNotes, setLocalNotes] = useState(notes);
-  const [localBalancePercentage, setLocalBalancePercentage] = useState(balancePercentage);
-  const [localTruth, setLocalTruth] = useState(truth);
-  const [activeAddFeeling, setActiveAddFeeling] = useState<string | null>(null);
-  const [showNotesForm, setShowNotesForm] = useState(false);
+export const ValueSheet: React.FC<Props> = ({ visible, value, valueId, onClose, userId }) => {
+  const [local, setLocal] = useState<ValueData | null>(null);
+  const active = local ?? value;
 
-  // Ref to track latest state for callbacks
-  const latestRef = useRef({
-    localFeelingsBeingHealed,
-    localFeelingsHealed,
-    localFeelingsHealedDates,
-    localBeliefs,
-    localNotes,
-    localBalancePercentage,
-    localTruth,
-  });
-  latestRef.current = {
-    localFeelingsBeingHealed,
-    localFeelingsHealed,
-    localFeelingsHealedDates,
-    localBeliefs,
-    localNotes,
-    localBalancePercentage,
-    localTruth,
+  React.useEffect(() => {
+    setLocal(value);
+  }, [value, visible]);
+
+  if (!active) return null;
+
+  const toggleFeeling = (f: string, kind: "healing" | "healed") => {
+    const healing = new Set(active.feelingsBeingHealed);
+    const healed = new Set(active.feelingsHealed ?? []);
+    if (kind === "healing") {
+      if (healing.has(f)) healing.delete(f);
+      else {
+        healing.add(f);
+        healed.delete(f);
+      }
+    } else {
+      if (healed.has(f)) healed.delete(f);
+      else {
+        healed.add(f);
+        healing.delete(f);
+      }
+    }
+    const healingArr = [...healing];
+    setLocal({ ...active, feelingsBeingHealed: healingArr, feelingsHealed: [...healed], balancePercentage: calculateBalance(healingArr.length) });
   };
 
-  useEffect(() => {
-    setLocalFeelingsBeingHealed(feelingsBeingHealed);
-    setLocalFeelingsHealed(feelingsHealed || []);
-    setLocalFeelingsHealedDates(feelingsHealedDates || {});
-    setLocalBeliefs(beliefs);
-    setLocalNotes(notes);
-    setLocalTruth(truth);
-    setLocalBalancePercentage(balancePercentage);
-  }, [isOpen, feelingsBeingHealed, feelingsHealed, feelingsHealedDates, beliefs, notes, truth, balancePercentage, valueName]);
+  const save = async (next: ValueData) => {
+    try {
+      const { error } = await supabase.from("spiritual_values").upsert(
+        {
+          user_id: userId,
+          value_id: valueId,
+          value_name: next.name,
+          balance_percentage: next.balancePercentage,
+          selected_feelings: next.feelingsBeingHealed,
+          positive_feelings: next.feelingsHealed ?? [],
+          positive_feeling_dates: next.feelingsHealedDates ?? {},
+          beliefs: next.beliefs,
+          truth: next.truth ?? "",
+          notes: next.notes,
+          is_pinned: next.isPinned ?? false,
+        } as any,
+        { onConflict: "user_id,value_id" }
+      );
+      if (error) throw error;
+    } catch (e) {
+      console.error(e);
+      Alert.alert("خطأ", "تعذر الحفظ");
+    }
+  };
 
-  // Save all data at once when closing the sheet (both button click + backdrop/cross click)
-  const handleClose = useCallback(() => {
-    const latest = latestRef.current;
-    onUpdate(
-      latest.localFeelingsBeingHealed,
-      latest.localFeelingsHealed,
-      latest.localFeelingsHealedDates,
-      latest.localBeliefs,
-      latest.localNotes,
-      latest.localBalancePercentage,
-      latest.localTruth
-    );
-    // Delay close slightly to avoid flicker - let state update settle first
-    requestAnimationFrame(() => {
-      onClose();
-    });
-  }, [onUpdate, onClose]);
-
-  // Get feeling state
-  const getFeelingState = useCallback((feeling: string): 'negative' | 'positive' | null => {
-    const latest = latestRef.current;
-    if (latest.localFeelingsBeingHealed.includes(feeling)) return 'negative';
-    if (latest.localFeelingsHealed.includes(feeling)) return 'positive';
-    return null;
-  }, []);
-
-  const handleFeelingToggle = useCallback((feeling: string) => {
-    const latest = latestRef.current;
-    let newBeingHealed = [...latest.localFeelingsBeingHealed];
-    let newHealed = [...latest.localFeelingsHealed];
-    let newDates = { ...latest.localFeelingsHealedDates };
-
-    const currentState = latest.localFeelingsBeingHealed.includes(feeling) ? 'negative' : 
-                         latest.localFeelingsHealed.includes(feeling) ? 'positive' : null;
-
-    if (currentState === null) {
-      newBeingHealed = [...newBeingHealed, feeling];
-    } else if (currentState === 'negative') {
-      newBeingHealed = newBeingHealed.filter((f) => f !== feeling);
-      newHealed = [...newHealed, feeling];
-      newDates[feeling] = new Date().toISOString();
+  const handleClose = async () => {
+    if (local && value && JSON.stringify(local) !== JSON.stringify(value)) {
+      await save(local);
+      onClose(local);
     } else {
-      newHealed = newHealed.filter((f) => f !== feeling);
-      delete newDates[feeling];
+      onClose();
     }
+  };
 
-    const positiveCount = newHealed.length;
-    const negativeCount = newBeingHealed.length;
-    const totalFeelings = 7;
-    const balanceChangePerFeeling = 50 / totalFeelings;
-    let newBalance = 50 + (positiveCount - negativeCount) * balanceChangePerFeeling;
-    newBalance = Math.max(0, Math.min(100, Math.round(newBalance)));
-
-    setLocalFeelingsBeingHealed(newBeingHealed);
-    setLocalFeelingsHealed(newHealed);
-    setLocalFeelingsHealedDates(newDates);
-    setLocalBalancePercentage(newBalance);
-  }, []);
-
-  // Update local state only — save to DB happens when sheet closes (handleClose)
-  const handleFeelingNoteChange = useCallback((feeling: string, note: string) => {
-    setLocalBeliefs(prev => ({ ...prev, [feeling]: note }));
-  }, []);
-
-  const persistFeelingNote = useCallback((feeling: string, note: string) => {
-    const latest = latestRef.current;
-    const nextBeliefs = { ...latest.localBeliefs, [feeling]: note };
-    setLocalBeliefs(nextBeliefs);
-    onUpdate(
-      latest.localFeelingsBeingHealed,
-      latest.localFeelingsHealed,
-      latest.localFeelingsHealedDates,
-      nextBeliefs,
-      latest.localNotes,
-      latest.localBalancePercentage,
-      latest.localTruth
-    );
-    toast.success("تم حفظ الارتباط");
-  }, [onUpdate]);
-
-  const handleNotesChange = useCallback((value: string) => {
-    setLocalNotes(value);
-  }, []);
-
-  const handleBalanceChange = useCallback((value: number[]) => {
-    setLocalBalancePercentage(value[0]);
-  }, []);
-
-  const getValueMarkdown = useCallback(() => {
-    const source = valueData ?? {
-      id: valueId ?? "",
-      name: valueName,
-      feelingsBeingHealed: localFeelingsBeingHealed,
-      feelingsHealed: localFeelingsHealed,
-      feelingsHealedDates: localFeelingsHealedDates,
-      beliefs: localBeliefs,
-      notes: localNotes,
-      balancePercentage: localBalancePercentage,
-      isPinned,
-    };
-
-    return buildValueMarkdown({
-      valueId: source.id ?? "",
-      valueName: source.name,
-      balancePercentage: source.balancePercentage ?? 50,
-      isPinned: !!source.isPinned,
-      feelingsBeingHealed: source.feelingsBeingHealed ?? [],
-      feelingsHealed: source.feelingsHealed ?? [],
-      feelingsHealedDates: source.feelingsHealedDates ?? {},
-      beliefs: source.beliefs ?? {},
-      notes: source.notes ?? "",
-      exportedAt: new Date().toISOString(),
+  const downloadOne = async () => {
+    const md = buildValueMarkdown({
+      valueId,
+      valueName: active.name,
+      balancePercentage: active.balancePercentage,
+      isPinned: active.isPinned,
+      feelingsBeingHealed: active.feelingsBeingHealed,
+      feelingsHealed: active.feelingsHealed,
+      feelingsHealedDates: active.feelingsHealedDates,
+      beliefs: active.beliefs,
+      notes: active.notes,
     });
-  }, [valueData, valueId, valueName, localFeelingsBeingHealed, localFeelingsHealed, localFeelingsHealedDates, localBeliefs, localNotes, localBalancePercentage, isPinned]);
-
-  const handleCopyValue = useCallback(async () => {
-    try {
-      await navigator.clipboard.writeText(getValueMarkdown());
-      toast.success("تم نسخ بيانات القيمة");
-    } catch (err) {
-      toast.error("تعذر نسخ البيانات");
-      console.error(err);
-    }
-  }, [getValueMarkdown]);
-
-  const handleDownloadValue = useCallback(() => {
-    const source = valueData ?? {
-      id: valueId ?? "",
-      name: valueName,
-      feelingsBeingHealed: localFeelingsBeingHealed,
-      feelingsHealed: localFeelingsHealed,
-      feelingsHealedDates: localFeelingsHealedDates,
-      beliefs: localBeliefs,
-      notes: localNotes,
-      balancePercentage: localBalancePercentage,
-      isPinned,
-    };
-
-    const md = getValueMarkdown();
-
-    try {
-      const blob = new Blob(["\ufeff" + md], { type: "text/markdown;charset=utf-8" });
-      const url = URL.createObjectURL(blob);
-      const a = document.createElement("a");
-      const safeName = source.name.replace(/\s+/g, "_");
-      a.href = url;
-      a.download = `value_${safeName}.md`;
-      document.body.appendChild(a);
-      a.click();
-      document.body.removeChild(a);
-      URL.revokeObjectURL(url);
-      toast.success("تم تحميل بيانات القيمة");
-    } catch (err) {
-      toast.error("تعذر تحميل الملف");
-      console.error(err);
-    }
-  }, [getValueMarkdown, valueData, valueId, valueName, localFeelingsBeingHealed, localFeelingsHealed, localFeelingsHealedDates, localBeliefs, localNotes, localBalancePercentage, isPinned]);
-
-  const balanceColor = getBalanceColor(localBalancePercentage);
-
-  const withAlpha = (hsl: string, alpha: number): string => {
-    return hsl.startsWith("hsl(")
-      ? hsl.replace("hsl(", "hsla(").replace(")", `, ${alpha})`)
-      : hsl;
+    await shareMarkdown(`value-${active.name}.md`, md);
   };
 
   return (
-    <Sheet open={isOpen} onOpenChange={(open) => { if (!open) handleClose(); }}>
-      <SheetContent className="w-full md:w-[500px] lg:w-[700px] overflow-y-auto px-3 pb-24">
-        <SheetHeader>
-          <SheetTitle className="text-3xl font-bold text-primary text-center mb-4">
-            {valueName}
-          </SheetTitle>
-          <SheetDescription className="text-center text-muted-foreground">
-            {/* Description content */}
-          </SheetDescription>
-        </SheetHeader>
-        {valueId && onTogglePin && (
-          <div className="absolute top-4 left-4 z-50">
-            <Button
-              variant="ghost"
-              size="icon"
-              onClick={onTogglePin}
-              className="rounded-full bg-background/60 backdrop-blur-lg hover:bg-background/80"
-            >
-              {isPinned ? (
-                <PinOff className="h-5 w-5 text-primary" />
-              ) : (
-                <Pin className="h-5 w-5 text-muted-foreground" />
-              )}
-            </Button>
-          </div>
-        )}
-        <div className="absolute top-4 right-4 z-50 flex items-center gap-2">
-          <Button
-            type="button"
-            variant="ghost"
-            size="icon"
-            onClick={handleCopyValue}
-            title="نسخ كل محتوى القيمة"
-            className="rounded-full bg-background/60 backdrop-blur-lg hover:bg-background/80"
-          >
-            <Copy className="h-5 w-5 text-primary" />
-          </Button>
-          <Button
-            type="button"
-            variant="ghost"
-            size="icon"
-            onClick={handleDownloadValue}
-            title="تحميل كل ما يخص هذه القيمة"
-            className="rounded-full bg-background/60 backdrop-blur-lg hover:bg-background/80"
-          >
-            <Download className="h-5 w-5 text-primary" />
-          </Button>
-        </div>
-        <div className="space-y-6">
-          {/* Balance percentage slider */}
-          <Slider
-            value={[localBalancePercentage]}
-            onValueChange={handleBalanceChange}
-            max={100}
-            min={0}
-            step={1}
-            className="w-full"
-            rangeClassName="bg-[--slider-color]"
-            style={{
-              // @ts-ignore
-              '--slider-color': balanceColor,
-              background: `linear-gradient(90deg, ${withAlpha(balanceColor, 0.3)} 0%, ${withAlpha(balanceColor, 0.6)} ${localBalancePercentage}%, ${withAlpha(balanceColor, 0.1)} ${localBalancePercentage}%, ${withAlpha(balanceColor, 0.05)} 100%)`,
-            } as React.CSSProperties}
+    <Modal visible={visible} animationType="slide" presentationStyle="pageSheet" onRequestClose={handleClose}>
+      <View className="flex-1 bg-black pt-10">
+        <View className="flex-row items-center justify-between px-4 pb-3 border-b border-zinc-800">
+          <Pressable onPress={handleClose} className="p-2"><X size={22} color="#fff" /></Pressable>
+          <Text className="text-white text-lg font-bold">{active.name} — {active.balancePercentage}%</Text>
+          <View className="flex-row">
+            <Pressable onPress={() => setLocal({ ...active, isPinned: !active.isPinned })} className="p-2">
+              <Pin size={20} color={active.isPinned ? "#D4AF37" : "#71717A"} />
+            </Pressable>
+            <Pressable onPress={downloadOne} className="p-2"><Download size={20} color="#fff" /></Pressable>
+          </View>
+        </View>
+        <ScrollView className="flex-1 px-4 py-3">
+          <Text className="text-zinc-400 mb-2">المشاعر (جاري علاجها — أحمر / تم علاجها — أخضر)</Text>
+          {(FEELINGS as readonly string[]).map((f) => {
+            const healing = active.feelingsBeingHealed.includes(f);
+            const healed = (active.feelingsHealed ?? []).includes(f);
+            return (
+              <View key={f} className="mb-3 rounded-xl border border-zinc-800 p-2">
+                <View className="flex-row items-center justify-between">
+                  <Text className="text-white font-bold">{f}</Text>
+                  <View className="flex-row gap-2">
+                    <Pressable
+                      onPress={() => toggleFeeling(f, "healing")}
+                      className={`px-3 py-1 rounded-full ${healing ? "bg-red-500" : "bg-zinc-800"}`}
+                    >
+                      <Text className="text-white text-xs">علاج</Text>
+                    </Pressable>
+                    <Pressable
+                      onPress={() => toggleFeeling(f, "healed")}
+                      className={`px-3 py-1 rounded-full ${healed ? "bg-emerald-500" : "bg-zinc-800"}`}
+                    >
+                      <Text className="text-white text-xs">شُفي</Text>
+                    </Pressable>
+                  </View>
+                </View>
+                <TaskList
+                  raw={active.beliefs[f] || ""}
+                  onChange={(raw) => setLocal({ ...active, beliefs: { ...active.beliefs, [f]: raw } })}
+                />
+              </View>
+            );
+          })}
+          <Text className="text-zinc-400 mt-2 mb-1">الحقيقة</Text>
+          <TextInput
+            value={active.truth ?? ""}
+            onChangeText={(t) => setLocal({ ...active, truth: t })}
+            multiline
+            textAlign="right"
+            className="bg-zinc-900 text-white rounded-xl p-3 min-h-[80px] border border-zinc-800"
+            placeholder="اكتب الحقيقة المحررة..."
+            placeholderTextColor="#52525B"
           />
-
-          {/* الحقيقة */}
-          <div className="space-y-2">
-            <Label htmlFor="truth" className="text-base font-semibold text-foreground">
-              الحقيقة
-            </Label>
-            <div
-              contentEditable
-              suppressContentEditableWarning
-              onBlur={(e) => setLocalTruth(e.currentTarget.textContent || "")}
-              data-placeholder="اكتب الحقيقة هنا..."
-              className="text-base text-foreground leading-relaxed whitespace-pre-wrap outline-none min-h-[2.75rem] max-h-44 overflow-y-auto rounded-lg border border-white/10 bg-white/[0.04] px-4 py-2.5 empty:before:content-[attr(data-placeholder)] empty:before:text-muted-foreground/50 focus-within:border-primary/40 transition-colors"
-              style={{ direction: "rtl", lineHeight: "1.8" }}
-            >
-              {localTruth}
-            </div>
-          </div>
-
-          <div className="space-y-3">
-            <div className="space-y-2">
-              {FEELINGS.map((feeling) => (
-                <div
-                  key={feeling}
-                  className="flex flex-col gap-3 rounded-lg"
-                >
-                  <div className="flex items-center gap-3">
-                    <button
-                      type="button"
-                      onClick={() => handleFeelingToggle(feeling)}
-                      className="relative flex items-center justify-center w-6 h-6 rounded-full transition-all duration-300 ease-in-out hover:scale-110 focus:outline-none focus:ring-2 focus:ring-primary/50 focus:ring-offset-2 focus:ring-offset-card flex-shrink-0"
-                    >
-                      {(() => {
-                        const feelingState = getFeelingState(feeling);
-                        const isNegative = feelingState === 'negative';
-                        const isPositive = feelingState === 'positive';
-                        if (isNegative) {
-                          return (
-                            <>
-                              <div className="absolute inset-0 rounded-full border-2 border-destructive bg-destructive/10 shadow-lg shadow-destructive/20" />
-                              <div className="relative w-3.5 h-3.5 rounded-full bg-destructive shadow-md" />
-                            </>
-                          );
-                        }
-                        if (isPositive) {
-                          return (
-                            <>
-                              <div className="absolute inset-0 rounded-full border-2 border-success bg-success/5 shadow-lg shadow-success/20" />
-                              <div className="relative w-3.5 h-3.5 rounded-full bg-success shadow-md" />
-                            </>
-                          );
-                        }
-                        return (
-                          <div className="absolute inset-0 rounded-full border-2 border-muted-foreground/30 bg-muted/20 hover:border-muted-foreground/50 hover:bg-muted/30" />
-                        );
-                      })()}
-                    </button>
-                    <div className="flex flex-col flex-1 min-w-0">
-                      <div className="flex items-center gap-2">
-                        <Label
-                          htmlFor={feeling}
-                          className="text-lg font-semibold text-foreground cursor-pointer truncate"
-                          onClick={() => handleFeelingToggle(feeling)}
-                        >
-                          {feeling}
-                        </Label>
-                      </div>
-                      {localFeelingsHealedDates[feeling] && (
-                        <span className="text-xs text-muted-foreground mt-0.5">
-                          {new Date(localFeelingsHealedDates[feeling]).toLocaleDateString('en-US', {
-                            year: 'numeric',
-                            month: 'numeric',
-                            day: 'numeric',
-                          })}
-                        </span>
-                      )}
-                    </div>
-                  </div>
-                  <div className="w-full pt-2 border-t border-border/30">
-                    <TaskList
-                      value={localBeliefs[feeling] || ""}
-                      onChange={(value) => handleFeelingNoteChange(feeling, value)}
-                      onPersist={(value) => persistFeelingNote(feeling, value)}
-                      showAddForm={activeAddFeeling === feeling}
-                      onAddTask={(action) => {
-                        if (action === "show") {
-                          setActiveAddFeeling(feeling);
-                        } else {
-                          setActiveAddFeeling(null);
-                        }
-                      }}
-                    />
-                  </div>
-                </div>
-              ))}
-            </div>
-          </div>
-
-          <div className="space-y-3">
-            <div className="flex items-center gap-2">
-              <Label htmlFor="notes" className="text-lg font-semibold text-foreground">
-                ملاحظات وتأملات
-              </Label>
-              {!localNotes && !showNotesForm && (
-                <button
-                  type="button"
-                  onClick={() => setShowNotesForm(true)}
-                  className="flex items-center gap-1 text-xs text-primary hover:text-primary/80 transition-colors"
-                >
-                  <StickyNote className="h-3.5 w-3.5" />
-                  إضافة ملاحظة
-                </button>
-              )}
-            </div>
-            {(localNotes || showNotesForm) && (
-              <div>
-                {!localNotes && (
-                  <div className="flex justify-end mb-2">
-                    <button
-                      type="button"
-                      onClick={() => setShowNotesForm(false)}
-                      className="text-xs text-muted-foreground hover:text-foreground transition-colors"
-                    >
-                      <X className="h-4 w-4" />
-                    </button>
-                  </div>
-                )}
-                <div
-                  contentEditable
-                  suppressContentEditableWarning
-                  onBlur={(e) => handleNotesChange(e.currentTarget.textContent || "")}
-                  data-placeholder="اكتب ملاحظاتك هنا..."
-                  className="text-base text-foreground leading-loose whitespace-pre-wrap outline-none min-h-[3rem] rounded-md border border-white/10 bg-white/5 px-3 py-2 empty:before:content-[attr(data-placeholder)] empty:before:text-muted-foreground/60"
-                  style={{ direction: "rtl", lineHeight: "2" }}
-                >
-                  {localNotes}
-                </div>
-              </div>
-            )}
-          </div>
-
-        </div>
-        <button
-          type="button"
-          onClick={handleClose}
-          className="fixed bottom-0 left-0 right-0 md:left-[calc(50%-250px)] lg:left-[calc(50%-350px)] md:max-w-[500px] lg:max-w-[700px] text-white bg-white/10 backdrop-blur-xl border-t border-white/20 px-8 py-4 h-16 text-lg font-semibold shadow-2xl flex items-center justify-center gap-2 transition-all duration-200 hover:bg-white/15 z-50"
-        >
-          <Save className="h-5 w-5" />
-          حفظ
-        </button>
-      </SheetContent>
-    </Sheet>
+          <Text className="text-zinc-400 mt-3 mb-1">ملاحظات وتأملات</Text>
+          <TextInput
+            value={active.notes}
+            onChangeText={(t) => setLocal({ ...active, notes: t })}
+            multiline
+            textAlign="right"
+            className="bg-zinc-900 text-white rounded-xl p-3 min-h-[100px] border border-zinc-800"
+            placeholder="ملاحظات..."
+            placeholderTextColor="#52525B"
+          />
+          <Text className="text-zinc-400 mt-3">الاتزان: {active.balancePercentage}%</Text>
+          <Slider
+            minimumValue={0}
+            maximumValue={100}
+            step={1}
+            value={active.balancePercentage}
+            onValueChange={(v) => setLocal({ ...active, balancePercentage: Math.round(v) })}
+            minimumTrackTintColor="#D4AF37"
+            maximumTrackTintColor="#27272A"
+          />
+          <View className="h-10" />
+        </ScrollView>
+      </View>
+    </Modal>
   );
 };
